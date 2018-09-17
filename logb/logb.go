@@ -4,10 +4,8 @@ import (
 	"errors"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 // TODO - should we replace with Gorilla logger?
@@ -15,9 +13,50 @@ import (
 
 var reqLog = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 
+// SetupAppLog - setup log multi writer
+func SetupAppLog(logPath string, logPrefix string, logSuffix string) error {
+
+	logFile := BuildFullLogName(logPath, logPrefix, logSuffix)
+
+	// prepend date and time to log entries
+	log.SetFlags(log.Ldate | log.Ltime)
+
+	// open the log file
+	f, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+
+	if err != nil {
+		return err
+	}
+
+	// setup a multiwriter to log to file and stdout
+	wrt := io.MultiWriter(os.Stdout, f)
+	log.SetOutput(wrt)
+
+	return nil
+}
+
+// BuildFullLogName - build the full log file name
+// app services sets the WEBSITE_ROLE_INSTANCE_ID environment variable
+//   since we're writing to the CIFS share, we need to differentiate log file names
+//   in case there are multiple instances running
+func BuildFullLogName(logPath string, logPrefix string, logSuffix string) string {
+	if !strings.HasSuffix(logPath, "/") {
+		logPath += "/"
+	}
+
+	fileName := logPath + logPrefix
+
+	// use instance ID to differentiate log files between instances in App Services
+	if iid := os.Getenv("WEBSITE_ROLE_INSTANCE_ID"); iid != "" {
+		fileName += "_" + strings.TrimSpace(iid)
+	}
+
+	return fileName + logSuffix
+}
+
 // SetLogFile - initialize the log file and add multi writer
-func SetLogFile(logFile string) error {
-	logFile = strings.TrimSpace(logFile)
+func SetLogFile(logPath string, logPrefix string, logSuffix string) error {
+	logFile := BuildFullLogName(logPath, logPrefix, logSuffix)
 
 	if logFile == "" {
 		return errors.New("ERROR: logbpath cannot be blank")
@@ -35,49 +74,4 @@ func SetLogFile(logFile string) error {
 	reqLog.SetOutput(wrt)
 
 	return nil
-}
-
-//Handler - http handler that writes to log file(s)
-func Handler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-		wr := &ResponseLogger{
-			ResponseWriter: w,
-			status:         0,
-			start:          time.Now().UTC()}
-
-		if next != nil {
-			next.ServeHTTP(wr, r)
-		}
-
-		reqLog.Println(wr.status, time.Now().UTC().Sub(wr.start).Nanoseconds()/100000, r.Method, r.URL.Path, r.URL.RawQuery)
-	})
-}
-
-// ResponseLogger - wrap http.ResponseWriter to include status and size
-type ResponseLogger struct {
-	http.ResponseWriter
-	status int
-	size   int
-	start  time.Time
-}
-
-// WriteHeader - wraps http.WriteHeader
-func (r *ResponseLogger) WriteHeader(status int) {
-	// store status for logging
-	r.status = status
-
-	r.ResponseWriter.WriteHeader(status)
-}
-
-// Write - wraps http.Write
-func (r *ResponseLogger) Write(buf []byte) (int, error) {
-	n, err := r.ResponseWriter.Write(buf)
-
-	// store bytes written for logging
-	if err == nil {
-		r.size += n
-	}
-
-	return n, err
 }
