@@ -23,7 +23,7 @@ func Handler(next http.Handler) http.Handler {
 			duration:       0}
 
 		Logger.Println("Request", id, r.Method, r.URL.Path, r.URL.RawQuery)
-		defer Logger.Println("Response", id, wr.status, wr.duration, wr.bytes)
+		defer logRequest(id, wr)
 
 		if next != nil {
 			next.ServeHTTP(wr, r)
@@ -31,6 +31,10 @@ func Handler(next http.Handler) http.Handler {
 
 		wr.duration = time.Now().UTC().Sub(wr.start).Nanoseconds() / 100000
 	})
+}
+
+func logRequest(id int64, wr *ResponseLogger) {
+	Logger.Println("Response", id, wr.status, wr.duration, wr.bytes)
 }
 
 // ResponseLogger - wrap http.ResponseWriter to include status and size
