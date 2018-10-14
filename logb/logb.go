@@ -1,77 +1,63 @@
 package logb
 
 import (
-	"errors"
-	"io"
 	"log"
+	"net/http"
 	"os"
-	"strings"
+	"time"
 )
 
-// TODO - should we replace with Gorilla logger?
-// TODO - add Apache log file support
+// Logger - the Logger that is written to - default is stdout
+var Logger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 
-var reqLog = log.New(os.Stdout, "", log.Ldate|log.Ltime)
+//Handler - http handler that writes to log file(s)
+func Handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-// SetupAppLog - setup log multi writer
-func SetupAppLog(logPath string, logPrefix string, logSuffix string) error {
+		id := time.Now().UnixNano()
 
-	logFile := BuildFullLogName(logPath, logPrefix, logSuffix)
+		wr := &ResponseLogger{
+			ResponseWriter: w,
+			status:         0,
+			start:          time.Now().UTC(),
+			duration:       0}
 
-	// prepend date and time to log entries
-	log.SetFlags(log.Ldate | log.Ltime)
+		Logger.Println("Request", id, r.Method, r.URL.Path, r.URL.RawQuery)
+		defer Logger.Println("Response", id, wr.status, wr.duration, wr.bytes)
 
-	// open the log file
-	f, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if next != nil {
+			next.ServeHTTP(wr, r)
+		}
 
-	if err != nil {
-		return err
-	}
-
-	// setup a multiwriter to log to file and stdout
-	wrt := io.MultiWriter(os.Stdout, f)
-	log.SetOutput(wrt)
-
-	return nil
+		wr.duration = time.Now().UTC().Sub(wr.start).Nanoseconds() / 100000
+	})
 }
 
-// BuildFullLogName - build the full log file name
-// app services sets the WEBSITE_ROLE_INSTANCE_ID environment variable
-//   since we're writing to the CIFS share, we need to differentiate log file names
-//   in case there are multiple instances running
-func BuildFullLogName(logPath string, logPrefix string, logSuffix string) string {
-	if !strings.HasSuffix(logPath, "/") {
-		logPath += "/"
-	}
-
-	fileName := logPath + logPrefix
-
-	// use instance ID to differentiate log files between instances in App Services
-	if iid := os.Getenv("WEBSITE_ROLE_INSTANCE_ID"); iid != "" {
-		fileName += "_" + strings.TrimSpace(iid)
-	}
-
-	return fileName + logSuffix
+// ResponseLogger - wrap http.ResponseWriter to include status and size
+type ResponseLogger struct {
+	http.ResponseWriter
+	status   int
+	bytes    int
+	start    time.Time
+	duration int64
 }
 
-// SetLogFile - initialize the log file and add multi writer
-func SetLogFile(logPath string, logPrefix string, logSuffix string) error {
-	logFile := BuildFullLogName(logPath, logPrefix, logSuffix)
+// WriteHeader - wraps http.WriteHeader
+func (r *ResponseLogger) WriteHeader(status int) {
+	// store status for logging
+	r.status = status
 
-	if logFile == "" {
-		return errors.New("ERROR: logbpath cannot be blank")
+	r.ResponseWriter.WriteHeader(status)
+}
+
+// Write - wraps http.Write
+func (r *ResponseLogger) Write(buf []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(buf)
+
+	// store bytes written for logging
+	if err == nil {
+		r.bytes += n
 	}
 
-	// open the logfile
-	f, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-
-	if err != nil {
-		return err
-	}
-
-	// setup the multi writer
-	wrt := io.MultiWriter(os.Stdout, f)
-	reqLog.SetOutput(wrt)
-
-	return nil
+	return n, err
 }

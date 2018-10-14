@@ -15,13 +15,6 @@ func TestMain(t *testing.T) {
 
 }
 
-func TestSetLogFile(t *testing.T) {
-
-	if err := SetLogFile("./", "test", ".log"); err != nil {
-		t.Error(err)
-	}
-}
-
 func TestLogb(t *testing.T) {
 
 	r, err := http.NewRequest("GET", "https://www.logb.com/", nil)
